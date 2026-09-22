@@ -1,13 +1,9 @@
-from pythonosc.udp_client import SimpleUDPClient
-
+from osc.demo_api import PdDemoApi
 from transport.udp import UDPReceiver
 
 receiver = UDPReceiver("0.0.0.0", 5678)
 
-IP = "127.0.0.1"
-PORT = 8765
-
-client = SimpleUDPClient(IP, PORT)
+api = PdDemoApi()
 
 try:
     while True:
@@ -19,7 +15,7 @@ try:
                 freq += 100 * i
 
         print(f"Playing {freq} Hz")
-        client.send_message("/play", (freq, 0.1))
+        api.play(freq, 0.1, 500)
 
 except KeyboardInterrupt:
     print("\nExiting...")

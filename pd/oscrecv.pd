@@ -1,0 +1,12 @@
+#N canvas 793 177 450 300 12;
+#X obj 61 106 netreceive -u -b;
+#X obj 61 141 oscparse;
+#X obj 61 181 list trim;
+#X obj 61 36 loadbang;
+#X obj 61 216 outlet;
+#X msg 61 71 listen 8765;
+#X connect 0 0 1 0;
+#X connect 1 0 2 0;
+#X connect 2 0 4 0;
+#X connect 3 0 5 0;
+#X connect 5 0 0 0;
