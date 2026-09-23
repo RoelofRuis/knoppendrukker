@@ -20,6 +20,9 @@ class Cap1188Sensor:
 
     def handle_interrupt(self):
         touched_pins = self._sensor.touched_pins
+        for i in range(0, 8):
+            raw = self._sensor[i].raw_value
+            print(f"Value {i}: {raw}\n")
         state = sum(pin << i for i, pin in enumerate(touched_pins))
         self.queue.put(Interrupt(
             timestamp=time.monotonic(),
