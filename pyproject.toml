@@ -2,7 +2,7 @@
 name = "knoppendrukker"
 version = "0.1.0"
 dependencies = [
-    "setuptools==84.0.0",
+    "setuptools==82.0.1",
     "typing_extensions==4.16.0",
     "python-osc==1.10.2",
 ]
