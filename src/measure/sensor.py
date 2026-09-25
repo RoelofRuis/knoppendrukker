@@ -19,7 +19,7 @@ class Cap1188Sensor:
             interrupt_pin: int,
             averaging: int = 8,
             sample_time: str = "1.28ms",
-            cycle_time: str = "70ms",
+            cycle_time: str = "35ms",
     ):
         self.interrupt_pin = interrupt_pin
         self.is_started = False
