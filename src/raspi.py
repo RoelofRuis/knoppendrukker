@@ -5,7 +5,7 @@ from transport.udp import UDPSender
 
 interrupt_queue = Queue()
 
-sensor = Cap1188Sensor(22, interrupt_queue)
+sensor = Cap1188Sensor(interrupt_queue, 22, 4, "1.28ms", "70ms")
 
 sensor.start()
 print("Subscribed to CAP1188 interrupts!\n")

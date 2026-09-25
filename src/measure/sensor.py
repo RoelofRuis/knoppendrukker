@@ -13,10 +13,20 @@ class Cap1188Sensor:
     _sensor: CAP1188_I2C
     _int_pin: Button
 
-    def __init__(self, interrupt_pin: int, queue: Queue):
+    def __init__(
+            self,
+            queue: Queue,
+            interrupt_pin: int,
+            averaging: int = 8,
+            sample_time: str = "1.28ms",
+            cycle_time: str = "70ms",
+    ):
         self.interrupt_pin = interrupt_pin
         self.is_started = False
         self.queue = queue
+        self._averaging = averaging
+        self._sample_time = sample_time
+        self._cycle_time = cycle_time
 
     def handle_interrupt(self):
         touched_pins = self._sensor.touched_pins
@@ -40,6 +50,7 @@ class Cap1188Sensor:
         i2c = board.I2C()
         self._sensor = CAP1188_I2C(i2c)
 
+        self._sensor.averaging = self._averaging
         self._sensor.alert_polarity = True
         self._sensor.interrupt_on_release = False
 
@@ -58,4 +69,3 @@ class Cap1188Sensor:
 
         self.is_started = False
         self._int_pin.close()
-
