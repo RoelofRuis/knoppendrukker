@@ -8,8 +8,8 @@ interrupt_queue = Queue()
 sensor = Cap1188Sensor(
     interrupt_queue,
     22,
-    4,
-    "1.28ms",
+    8,
+    "640us",
     "35ms"
 )
 
