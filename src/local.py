@@ -9,6 +9,11 @@ try:
     while True:
         msg = receiver.receive()
 
+        if msg.pins & 1:
+            api.kick()
+            print("Play kick")
+            continue
+
         freq = 0
         for i in range(8):
             if msg.pins & (1 << i):

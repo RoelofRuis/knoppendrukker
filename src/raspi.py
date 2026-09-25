@@ -9,7 +9,7 @@ sensor = Cap1188Sensor(
     interrupt_queue,
     22,
     8,
-    "640us",
+    "320us",
     "35ms"
 )
 

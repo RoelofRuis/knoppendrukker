@@ -7,3 +7,6 @@ class PdDemoApi:
 
     def play(self, freq: float, vol: float, dur: float):
         self.client.send_message("/play", (freq, vol, dur))
+
+    def kick(self):
+        self.client.send_message("/kick", ())
