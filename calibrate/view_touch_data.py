@@ -2,7 +2,7 @@
 import csv
 import matplotlib.pyplot as plt
 
-CSV_FILE = "touch_readings_15102026.csv"
+CSV_FILE = "touch_readings_16102026.csv"
 
 times = []
 touch = []
