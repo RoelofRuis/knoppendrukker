@@ -94,6 +94,8 @@ class SerialReader(threading.Thread):
             writer = csv.writer(f)
             event_writer = csv.writer(ef)
             event_writer.writerow(["time_us", "channel", "event", "value"])
+            time.sleep(0.1)  # let the Pico notice the connection first
+            ser.write(b"samples on\n")  # the Pico sends only events unless asked
             ser.reset_input_buffer()
             ser.readline()  # drop a possibly partial line
 
@@ -189,8 +191,8 @@ def main():
         if not reader.is_alive():
             raise SystemExit(f"Serial reader stopped: {reader.error}")
         if not warned and time.monotonic() - waiting_since > 3:
-            print(f"No samples from {port} yet. Is the sketch running? "
-                  "Try unplugging and replugging the Pico.")
+            print(f"No samples from {port} yet. Is the current sketch running "
+                  "(older ones ignore 'samples on')? Try unplugging and replugging the Pico.")
             warned = True
         time.sleep(0.1)
     n = reader.num_channels

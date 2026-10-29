@@ -1,33 +1,26 @@
 
 /*
-  Raspberry Pi Pico + MCP3008 - Multi-sensor pressure logger
+  Raspberry Pi Pico + MCP3008 - Multi-sensor pressure event detector
 
   MCP3008 on SPI0: GP16 (MISO), GP17 (CS), GP18 (SCK), GP19 (MOSI), powered from 3V3
-  Output over USB serial, two kinds of lines:
-    samples: time_us,ch0,...,chN-1
+  Output over USB serial:
     events:  E,time_us,channel,type,value   (type: touch, tap, hold, release)
+    samples: time_us,ch0,...,chN-1          (only after the "samples on" command)
 
-  See calibrate/README.md for the wiring and the event rules.
+  Commands from the host, one per line:
+    samples on    also stream every sample (calibration mode)
+    samples off   events only (default for every new connection)
+
+  Event detection lives in detector.h. See calibrate/README.md for the wiring
+  and the event rules.
 */
 
 #include <SPI.h>
+#include "detector.h"
 
-const int NUM_CHANNELS = 2;  // set to 8 once all sensors are connected
+const int NUM_CHANNELS = 4;  // set to 8 once all sensors are connected
 
 const unsigned long SAMPLE_INTERVAL_US = 1000;  // 1 kHz, all channels per sample
-
-// Event detection
-const float VREF = 3.3;
-const float THRESHOLD_V = 0.10;               // a press starts above this
-const float RELEASE_V = 0.08;                 // a press ends below this (hysteresis)
-const float TAP_RISE_V_PER_MS = 0.08;         // tap: rises at least this fast in one sample
-const unsigned long ONSET_WINDOW_US = 2000;   // no fast rise within this time: touch
-const unsigned long TAP_PEAK_MAX_US = 10000;  // send the tap by now even if still rising
-const unsigned long HOLD_INTERVAL_US = 10000; // hold event interval while pressed
-
-const int THRESHOLD_RAW = THRESHOLD_V / VREF * 1024;
-const int RELEASE_RAW = RELEASE_V / VREF * 1024;
-const int TAP_RISE_RAW = TAP_RISE_V_PER_MS / VREF * 1024 * SAMPLE_INTERVAL_US / 1000.0;
 
 const int MISO_PIN = 16;
 const int CS_PIN = 17;
@@ -39,18 +32,12 @@ SPISettings mcpSettings(1000000, MSBFIRST, SPI_MODE0);
 
 unsigned long nextSampleTime;
 bool hostConnected = false;
+bool streamSamples = false;
 
-enum class PressState { Idle, Onset, Rising, Pressed };  // scoped: Arduino already defines RISING
+Detector detectors[8];
 
-struct Press {
-  PressState state = PressState::Idle;
-  unsigned long startTime;
-  unsigned long lastHoldTime;
-  int previous = 0;
-  int peak;
-};
-
-Press presses[8];
+char commandBuffer[32];
+unsigned int commandLength = 0;
 
 int readMcp3008(int channel) {
   digitalWrite(CS_PIN, LOW);
@@ -61,73 +48,50 @@ int readMcp3008(int channel) {
   return ((high & 0x03) << 8) | low;
 }
 
-void printHeader() {
+void printSampleHeader() {
   Serial.print("time_us");
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
     Serial.print(",ch");
     Serial.print(ch);
   }
   Serial.println();
-  Serial.println("# events: E,time_us,channel,type,value");
 }
 
-void sendEvent(unsigned long time, int channel, const char *type, int value) {
+void handleCommand(const char *command) {
+  if (strcmp(command, "samples on") == 0) {
+    streamSamples = true;
+    printSampleHeader();
+  } else if (strcmp(command, "samples off") == 0) {
+    streamSamples = false;
+  } else {
+    Serial.print("# unknown command: ");
+    Serial.println(command);
+  }
+}
+
+void readCommands() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      commandBuffer[commandLength] = '\0';
+      if (commandLength > 0) {
+        handleCommand(commandBuffer);
+      }
+      commandLength = 0;
+    } else if (commandLength < sizeof(commandBuffer) - 1) {
+      commandBuffer[commandLength++] = c;
+    }
+  }
+}
+
+void sendEvent(int channel, const Event &event) {
   if (!hostConnected) {
     return;
   }
   char line[48];
-  int len = snprintf(line, sizeof(line), "E,%lu,%d,%s,%d\n", time, channel, type, value);
+  int len = snprintf(line, sizeof(line), "E,%lu,%d,%s,%d\n",
+                     (unsigned long)event.time, channel, eventName(event.type), event.value);
   Serial.write(line, len);
-}
-
-// touch/tap are timestamped at the start of the press, hold and release at the
-// moment they are sent. A press that rises fast (the start of a spike) within
-// ONSET_WINDOW_US is a tap, otherwise a touch. When in doubt it's a tap.
-// A tap is sent once its spike stops rising, with the top of the spike as value.
-void detectEvents(int channel, int value, unsigned long now) {
-  Press &p = presses[channel];
-  int rise = value - p.previous;
-  p.previous = value;
-
-  if (p.state == PressState::Idle) {
-    if (value <= THRESHOLD_RAW) {
-      return;
-    }
-    p.state = PressState::Onset;
-    p.startTime = now;
-    p.peak = value;
-  }
-
-  if (value < RELEASE_RAW) {
-    if (p.state == PressState::Onset || p.state == PressState::Rising) {
-      sendEvent(p.startTime, channel, "tap", p.peak);  // released before it could be classified
-    }
-    sendEvent(now, channel, "release", value);
-    p.state = PressState::Idle;
-    return;
-  }
-
-  if (p.state == PressState::Onset) {
-    p.peak = max(p.peak, value);
-    if (rise >= TAP_RISE_RAW) {
-      p.state = PressState::Rising;
-    } else if (now - p.startTime >= ONSET_WINDOW_US) {
-      sendEvent(p.startTime, channel, "touch", value);
-      p.state = PressState::Pressed;
-      p.lastHoldTime = now;
-    }
-  } else if (p.state == PressState::Rising) {
-    if (value > p.peak && now - p.startTime < TAP_PEAK_MAX_US) {
-      p.peak = value;
-    } else {
-      sendEvent(p.startTime, channel, "tap", p.peak);
-      p.state = PressState::Pressed;
-      p.lastHoldTime = now;
-    }
-  } else if (now - p.lastHoldTime >= HOLD_INTERVAL_US) {
-    sendEvent(now, channel, "hold", value);
-    p.lastHoldTime += HOLD_INTERVAL_US;
-  }
 }
 
 void setup() {
@@ -139,17 +103,28 @@ void setup() {
   SPI.setTX(MOSI_PIN);
   SPI.begin();
 
+  DetectorConfig config;
+  config.sampleIntervalUs = SAMPLE_INTERVAL_US;
+  for (int ch = 0; ch < NUM_CHANNELS; ch++) {
+    detectors[ch].configure(config);
+  }
+
   Serial.begin(115200);  // baud rate is ignored for USB serial
   nextSampleTime = micros();
 }
 
 void loop() {
-  // Re-send the CSV header whenever a host opens the serial port
+  // Every new host connection starts in events-only mode
   bool connected = Serial;
   if (connected && !hostConnected) {
-    printHeader();
+    streamSamples = false;
+    Serial.println("# events: E,time_us,channel,type,value");
   }
   hostConnected = connected;
+
+  if (hostConnected) {
+    readCommands();
+  }
 
   if ((long)(micros() - nextSampleTime) < 0) {
     return;
@@ -168,7 +143,7 @@ void loop() {
   }
   SPI.endTransaction();
 
-  if (hostConnected) {
+  if (hostConnected && streamSamples) {
     char line[96];
     int len = snprintf(line, sizeof(line), "%lu", now);
     for (int ch = 0; ch < NUM_CHANNELS; ch++) {
@@ -179,6 +154,10 @@ void loop() {
   }
 
   for (int ch = 0; ch < NUM_CHANNELS; ch++) {
-    detectEvents(ch, values[ch], now);
+    Event events[Detector::MAX_EVENTS];
+    int count = detectors[ch].update(values[ch], now, events);
+    for (int i = 0; i < count; i++) {
+      sendEvent(ch, events[i]);
+    }
   }
 }

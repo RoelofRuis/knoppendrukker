@@ -1,18 +1,20 @@
 # Pressure sensor calibration
 
 Read up to 8 pressure sensors at 1 kHz with a Raspberry Pi Pico and an MCP3008
-ADC, detect touch / tap / release events on the Pico, log samples and events
-to CSV, and watch both live on the computer.
+ADC, detect touch / tap / hold / release events on the Pico, and send them
+over USB. In calibration mode the raw samples are streamed too, so you can log
+them to CSV and watch both live on the computer.
 
 ```
- sensors ──> MCP3008 (8ch, 10-bit ADC) ──SPI──> Pico ──USB──> laptop: live_view.py (plot + CSV)
+ sensors ──> MCP3008 (8ch, 10-bit ADC) ──SPI──> Pico ──USB──> events (+ samples in calibration mode)
 ```
 
 | File | What it is |
 |---|---|
-| `calibrate_mcp3008/calibrate_mcp3008.ino` | Pico sketch: samples all channels every 1 ms, detects events, streams both over USB |
-| `live_view.py` | Live plot + CSV logger (samples and events) on the laptop |
-| `calibrate_touch/calibrate_touch.ino`, `receive_touch_data.py`, `view_touch_data.py` | Previous single-sensor setup (Pico's own ADC on A0) |
+| `calibrate_mcp3008/calibrate_mcp3008.ino` | Pico sketch: samples all channels every 1 ms, detects events, sends them over USB |
+| `calibrate_mcp3008/detector.h` | The event detection itself, plain C++, shared with the replay tool |
+| `live_view.py` | Calibration mode: live plot + CSV logger (samples and events) on the laptop |
+| `replay/replay.cpp` | Runs a recorded samples CSV through `detector.h` on the laptop |
 
 ## What you need
 
@@ -127,12 +129,34 @@ jumps high on a light touch and then barely moves, its resistor is too large.
 
 1. Arduino IDE with the **Raspberry Pi Pico/RP2040** core (Earle F. Philhower, III).
 2. Open `calibrate/calibrate_mcp3008/calibrate_mcp3008.ino`.
-3. Set `NUM_CHANNELS` to the number of connected sensors (2 now, up to 8 later).
+3. Set `NUM_CHANNELS` to the number of connected sensors (up to 8).
    Sensors must be connected to CH0 upwards without gaps.
-4. Board: `Raspberry Pi Pico`; hold BOOTSEL while plugging in the first time, then **Upload**.
+4. Board: `Raspberry Pi Pico 2` (or `Raspberry Pi Pico` for the original);
+   hold BOOTSEL while plugging in the first time, then **Upload**.
 
-The sketch lives in its own folder because the Arduino IDE compiles every
-`.ino` in a folder as one sketch; next to `calibrate_touch/calibrate_touch.ino` it would not build.
+Open the sketch from this folder, so `detector.h` next to it is included. If
+the Pico stops responding after an upload (no data, `Broken pipe` errors),
+unplug and replug it.
+
+From the command line, with the `arduino-cli` that comes with the Arduino IDE:
+
+```bash
+arduino-cli compile --fqbn rp2040:rp2040:rpipico2 calibrate/calibrate_mcp3008
+```
+
+### Modes
+
+The Pico starts every new USB connection in **events-only** mode: it sends just
+the event lines. That's what the Raspberry Pi will use. The host can switch the
+sample stream on and off by sending a line:
+
+| Command | Effect |
+|---|---|
+| `samples on` | Also send every sample (calibration mode); answers with the CSV header |
+| `samples off` | Events only again |
+
+`live_view.py` sends `samples on` itself when it connects. Lines starting with
+`#` are comments from the Pico (the event format on connect, unknown commands).
 
 ### 2. Live view and logging
 
@@ -192,8 +216,9 @@ time_us,channel,event,value
 
 ## Events
 
-The sample stream is unchanged; on top of it the Pico detects events per
-channel and sends them as extra lines (`E,time_us,channel,type,value`).
+The Pico detects events per channel and sends them as lines
+`E,time_us,channel,type,value`, in both modes. The detection code is in
+`calibrate_mcp3008/detector.h`.
 
 | Event | Rule | Sent after the press starts |
 |---|---|---|
@@ -224,19 +249,34 @@ with the highest level so far.
 Watch out for 50 Hz mains hum (bursts every 20 ms, e.g. from a loose wire or a
 floating input): each burst looks like a short tap.
 
-Tuning constants at the top of the sketch:
+Tuning settings, the defaults of `DetectorConfig` in `detector.h`:
 
-| Constant | Default | Effect |
+| Setting | Default | Effect |
 |---|---|---|
-| `THRESHOLD_V` | `0.10` | Level where a press starts |
-| `RELEASE_V` | `0.08` | Level where a press ends |
-| `TAP_RISE_V_PER_MS` | `0.08` | Rise speed that makes a press a `tap`; lower = more taps |
-| `ONSET_WINDOW_US` | `2000` | How long to look for a fast rise; also the `touch` latency |
-| `TAP_PEAK_MAX_US` | `10000` | Longest wait for the spike top before the `tap` is sent anyway |
-| `HOLD_INTERVAL_US` | `10000` | Interval between `hold` events |
+| `thresholdV` | `0.10` | Level where a press starts |
+| `releaseV` | `0.08` | Level where a press ends |
+| `tapRiseVPerMs` | `0.08` | Rise speed that makes a press a `tap`; lower = more taps |
+| `onsetWindowUs` | `2000` | How long to look for a fast rise; also the `touch` latency |
+| `tapPeakMaxUs` | `10000` | Longest wait for the spike top before the `tap` is sent anyway |
+| `holdIntervalUs` | `10000` | Interval between `hold` events |
 
-If you change `THRESHOLD_V`, change it in `live_view.py` too (only used for
-the dashed line).
+If you change `thresholdV`, change `THRESHOLD_V` in `live_view.py` too (only
+used for the dashed line).
+
+### Trying settings offline
+
+`replay/replay.cpp` runs a recorded samples CSV through `detector.h`, the
+same code as on the Pico, and prints the events in the `_events.csv` format.
+Use it to try new settings on recordings without reflashing:
+
+```bash
+g++ -std=c++17 -O2 -Wall -o calibrate/replay/replay calibrate/replay/replay.cpp
+calibrate/replay/replay readings_20261029_101500.csv > replayed_events.csv
+```
+
+With unchanged settings, replaying a recording should give the same events
+the Pico sent live (`readings_..._events.csv`), apart from a press that was
+already going on when the recording started. Diff the two to check.
 
 ## Timing and precision
 
